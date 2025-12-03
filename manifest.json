@@ -1,0 +1,22 @@
+{
+  "domain": "ump",
+  "name": "UnexpectedMatrixPixels",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "",
+  "issue_tracker": "",
+  "requirements": [
+    "pillow>=10.0.0",
+    "bleak",
+    "bleak-retry-connector>=1.0.0"
+  ],
+  "version": "1.0.0",
+  "iot_class": "local_polling",
+  "integration_type": "device",
+  "bluetooth": [
+    {
+      "service_uuid": "000000fa-0000-1000-8000-00805f9b34fb",
+      "connectable": true
+    }
+  ]
+}

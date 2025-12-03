@@ -1,0 +1,58 @@
+draw_visuals:
+  name: Draw Visuals
+  description: Advanced drawing on the matrix (text, pixels, images, icons).
+  target:
+    entity:
+      integration: ump
+  fields:
+    background:
+      name: Background RGB
+      description: Background color [r,g,b].
+      example: [0, 0, 0]
+      selector:
+        color_rgb:
+    fps:
+      name: Max FPS
+      description: Maximum frames per second (1-30). Lower value = better stability. Default 10.
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+    elements:
+      name: Visual Elements
+      description: >-
+        List of elements. Supported types:
+        - text: content, x, y, color, font ("3x5" or "5x7"), spacing
+        - textscroll: content, y, color, font, speed (pixels/sec), spacing
+        - textlong: content, x, y, color, font, speed (hold duration), scroll_duration, direction (up, down, left, right)
+        - pixels: pixels=[[x, y, r, g, b], ...]
+        - image: x, y, path (local) OR url (http), width (opt), height (opt)
+        - icon: name (e.g., mdi:home), x, y, size, color
+      required: true
+      example: |
+        - type: textlong
+          content: "Scrolling Text"
+          y: 5
+          color: [0, 255, 255]
+          speed: 2.0
+          scroll_duration: 0.5
+          direction: "up"
+      selector:
+        object:
+
+clear_display:
+  name: Clear Display
+  description: Clears the screen.
+  target:
+    entity:
+      integration: ump
+
+sync_time:
+  name: Sync Time
+  description: Synchronize display clock with HA time.
+  target:
+    entity:
+      integration: ump
+
+
