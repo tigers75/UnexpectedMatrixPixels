@@ -7,7 +7,7 @@ import time
 import json
 import aiohttp
 from io import BytesIO
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Tuple
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -72,6 +72,10 @@ class IDMDisplayEntity(LightEntity):
         self._mdi_map = {} 
         self._mdi_fonts = {} 
         self._mdi_ready = False
+        
+        # --- CACHE (MEMOIZATION) ---
+        self._char_mask_cache: Dict[Tuple[str, str], Tuple[Optional[Image.Image], int]] = {}
+        
         self._hass.async_create_task(self._init_mdi())
 
     async def _init_mdi(self):
@@ -93,35 +97,38 @@ class IDMDisplayEntity(LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         self._is_on = True
-        await self._client.set_state(True)
-        await self._client.set_mode(0)
+        try:
+            await self._client.set_state(True)
+            await self._client.set_mode(0)
+        except Exception as e:
+            _LOGGER.warning(f"UMP device unavailable during turn_on: {e}")
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         if self._anim_task: self._anim_task.cancel()
         self._is_on = False
-        await self._client.set_state(False)
+        try:
+            await self._client.set_state(False)
+        except Exception as e:
+            _LOGGER.warning(f"UMP device unavailable during turn_off: {e}")
         self.async_write_ha_state()
 
     async def async_clear_display(self, **kwargs: Any) -> None:
         if self._anim_task: self._anim_task.cancel()
-        await self._client.set_mode(0)
-        await self._client.clear()
+        try:
+            await self._client.set_mode(0)
+            await self._client.clear()
+        except Exception as e:
+            _LOGGER.warning(f"UMP device unavailable during clear_display: {e}")
 
     async def async_sync_time(self, **kwargs: Any) -> None:
-        await self._client.sync_time()
+        try:
+            await self._client.sync_time()
+        except Exception as e:
+            _LOGGER.warning(f"UMP device unavailable during sync_time: {e}")
 
     async def async_draw_visuals(self, elements: list, background: list, fps: int = 10) -> None:
-        if not self._is_on:
-            await self._client.set_state(True)
-            self._is_on = True
-            self.async_write_ha_state()
-        await self._client.set_mode(0)
-        
-        if self._anim_task and not self._anim_task.done():
-            self._anim_task.cancel()
-            self._anim_task = None
-            
+        # Pre-process elements first to ensure we don't fail later
         processed_elements = []
         for el in elements:
             new_el = el.copy()
@@ -139,19 +146,60 @@ class IDMDisplayEntity(LightEntity):
                 new_el['_cached_lines'] = lines
 
             processed_elements.append(new_el)
-            
-        has_animation = any(el.get('type') in ['textscroll', 'textlong'] for el in processed_elements)
-        
-        if has_animation:
-            anim_elements = [el for el in processed_elements if el.get('type') in ['textscroll', 'textlong']]
-            if all(el.get('type') == 'textlong' and len(el.get('_cached_lines', [])) <= 1 for el in anim_elements):
-                has_animation = False
 
+        # Try setting state/mode first
+        try:
+            if not self._is_on:
+                await self._client.set_state(True)
+                self._is_on = True
+                self.async_write_ha_state()
+            await self._client.set_mode(0)
+        except Exception as e:
+            _LOGGER.warning(f"UMP device unavailable, skipping draw_visuals: {e}")
+            return # Stop processing to avoid further errors
+
+        if self._anim_task and not self._anim_task.done():
+            self._anim_task.cancel()
+            self._anim_task = None
+            
+        # --- LOGIC FIX: DETECT IF ANIMATION IS REALLY NEEDED ---
+        has_animation = False
+        anim_candidates = [el for el in processed_elements if el.get('type') in ['textscroll', 'textlong']]
+        
+        if anim_candidates:
+            for el in anim_candidates:
+                if el.get('type') == 'textscroll':
+                    # Textscroll always implies animation
+                    has_animation = True
+                    break
+                elif el.get('type') == 'textlong':
+                    # Textlong implies animation ONLY if multiple lines exist
+                    lines = el.get('_cached_lines', [])
+                    if len(lines) > 1:
+                        has_animation = True
+                        break
+        
         if has_animation:
             self._anim_task = self._hass.async_create_task(self._animate_loop(processed_elements, background, fps))
         else:
+            # STATIC FRAME LOGIC
+            # Even if static, check if frame changed vs last sent frame to avoid BLE spam
             canvas = self._render_canvas_sync(processed_elements, background)
-            await self._client.send_frame_png(canvas)
+            
+            if canvas.mode != 'RGB':
+                canvas = canvas.convert('RGB')
+            
+            img_byte_arr = BytesIO()
+            canvas.save(img_byte_arr, format='PNG', compress_level=0)
+            new_bytes = img_byte_arr.getvalue()
+            
+            last_bytes = self._client.get_last_frame()
+            
+            if last_bytes != new_bytes:
+                try:
+                    await self._client.send_frame_png(canvas)
+                except Exception as e:
+                    _LOGGER.warning(f"UMP device disconnected while sending frame: {e}")
 
     async def _animate_loop(self, elements: list, background: list, fps: int):
         target_frame_time = 1.0 / max(1, min(fps, 30)) 
@@ -166,7 +214,7 @@ class IDMDisplayEntity(LightEntity):
                     canvas = canvas.convert('RGB')
                 
                 img_byte_arr = BytesIO()
-                canvas.save(img_byte_arr, format='PNG')
+                canvas.save(img_byte_arr, format='PNG', compress_level=0)
                 new_bytes = img_byte_arr.getvalue()
                 
                 last_bytes = self._client.get_last_frame()
@@ -175,14 +223,13 @@ class IDMDisplayEntity(LightEntity):
                     try:
                         await self._client.send_frame_png(canvas)
                     except Exception as e:
-                        _LOGGER.warning(f"Error sending frame: {e}")
-                        await asyncio.sleep(1.0)
+                        _LOGGER.warning(f"Error sending frame (animation): {e}")
+                        # Wait a bit longer if connection failed before retrying
+                        await asyncio.sleep(5.0)
                         continue
 
                 elapsed = time.time() - loop_start
-                
                 sleep_time = max(0.01, target_frame_time - elapsed)
-                
                 await asyncio.sleep(sleep_time)
                 
         except asyncio.CancelledError:
@@ -190,31 +237,14 @@ class IDMDisplayEntity(LightEntity):
         except Exception as e:
             _LOGGER.error(f"Animation loop crashed: {e}")
 
-    def _blend_pixel(self, canvas: Image.Image, x: int, y: int, color: tuple):
-        if 0 <= x < self._width and 0 <= y < self._height:
-            if len(color) == 3 or (len(color) == 4 and color[3] == 255):
-                canvas.putpixel((x, y), color)
-                return
-            bg = canvas.getpixel((x, y))
-            src_r, src_g, src_b, src_a = color[0], color[1], color[2], color[3]
-            dst_r, dst_g, dst_b, dst_a = bg[0], bg[1], bg[2], bg[3]
-            alpha_src = src_a / 255.0
-            alpha_dst = dst_a / 255.0
-            out_a = alpha_src + alpha_dst * (1 - alpha_src)
-            if out_a == 0:
-                canvas.putpixel((x, y), (0, 0, 0, 0))
-                return
-            out_r = (src_r * alpha_src + dst_r * alpha_dst * (1 - alpha_src)) / out_a
-            out_g = (src_g * alpha_src + dst_g * alpha_dst * (1 - alpha_src)) / out_a
-            out_b = (src_b * alpha_src + dst_b * alpha_dst * (1 - alpha_src)) / out_a
-            canvas.putpixel((x, y), (int(out_r), int(out_g), int(out_b), int(out_a * 255)))
-
     def _render_canvas_sync(self, elements: list, background: list) -> Image.Image:
         bg_rgba = tuple(background)
         if len(bg_rgba) == 3:
             bg_rgba = bg_rgba + (255,)
+        
         canvas = Image.new('RGBA', (self._width, self._height), bg_rgba)
         draw = ImageDraw.Draw(canvas)
+        
         for el in elements:
             try:
                 el_type = el.get('type')
@@ -235,24 +265,76 @@ class IDMDisplayEntity(LightEntity):
                          canvas.paste(img, (x, y), img)
                     else:
                          canvas.paste(img, (x, y))
-            except Exception:
+            except Exception as e:
+                _LOGGER.debug(f"Error rendering element {el}: {e}")
                 pass
+        
         final_image = Image.new("RGB", canvas.size, (0, 0, 0))
         final_image.paste(canvas, (0, 0), mask=canvas)
         return final_image
 
-    def _measure_char_width(self, char: str, font_name: str) -> int:
+    def _get_char_mask(self, font_name: str, char: str) -> Tuple[Optional[Image.Image], int]:
+        cache_key = (font_name, char)
+        if cache_key in self._char_mask_cache:
+            return self._char_mask_cache[cache_key]
+
+        img_mask = None
+        advance = 0
+
         if font_name == 'awtrix':
             code = ord(char)
-            if 32 <= code <= 126: 
+            if 32 <= code <= 126:
                 glyph_idx = code - 32
                 if glyph_idx < len(AWTRIX_GLYPHS):
-                    return AWTRIX_GLYPHS[glyph_idx][3]
-            return 4 
-        elif font_name == '3x5':
-            return 3
+                    (bo, w, h, adv, xo, yo) = AWTRIX_GLYPHS[glyph_idx]
+                    advance = adv
+                    if w > 0 and h > 0:
+                        img_mask = Image.new('1', (w, h), 0)
+                        bits = 0
+                        bit_counter = 0
+                        current_bitmap_idx = bo
+                        for yy in range(h):
+                            for xx in range(w):
+                                if (bit_counter & 7) == 0:
+                                    if current_bitmap_idx < len(AWTRIX_BITMAPS):
+                                        bits = AWTRIX_BITMAPS[current_bitmap_idx]
+                                        current_bitmap_idx += 1
+                                    else:
+                                        bits = 0
+                                bit_counter += 1
+                                if bits & 0x80:
+                                    img_mask.putpixel((xx, yy), 1)
+                                bits <<= 1
+            else:
+                advance = 4
         else:
-            return 5
+            if font_name == '3x5':
+                font_data = FONT_3X5_DATA; char_w = 3; char_h = 5; stride = 3
+            else:
+                font_data = FONT_5X7_DATA; char_w = 5; char_h = 7; stride = 7
+            
+            advance = char_w
+            code = ord(char)
+            if code * stride < len(font_data):
+                img_mask = Image.new('1', (char_w, char_h), 0)
+                offset = code * stride
+                for col in range(char_w):
+                    if col >= stride: break
+                    byte = font_data[offset + col]
+                    for row in range(8):
+                        if row >= char_h: break
+                        if (byte >> row) & 1:
+                            img_mask.putpixel((col, row), 1)
+
+        if img_mask is None:
+            advance = 4 if font_name == 'awtrix' else (3 if font_name == '3x5' else 5)
+
+        self._char_mask_cache[cache_key] = (img_mask, advance)
+        return img_mask, advance
+
+    def _measure_char_width(self, char: str, font_name: str) -> int:
+        _, advance = self._get_char_mask(font_name, char)
+        return advance
 
     def _measure_text_width(self, text: str, font_name: str, spacing: int) -> int:
         if not text: return 0
@@ -292,49 +374,40 @@ class IDMDisplayEntity(LightEntity):
             
         return lines
 
-    def _draw_awtrix_char(self, canvas, x, y, char, color):
-        code = ord(char)
-        if 32 <= code <= 126: glyph_idx = code - 32
-        else: return 4
-        if glyph_idx >= len(AWTRIX_GLYPHS): return 4
-        (bo, w, h, adv, xo, yo) = AWTRIX_GLYPHS[glyph_idx]
-        baseline_y = y + 5 
-        bits = 0; bit_counter = 0; current_bitmap_idx = bo
-        for yy in range(h):
-            for xx in range(w):
-                if (bit_counter & 7) == 0:
-                    if current_bitmap_idx < len(AWTRIX_BITMAPS):
-                        bits = AWTRIX_BITMAPS[current_bitmap_idx]
-                        current_bitmap_idx += 1
-                    else: bits = 0
-                bit_counter += 1
-                if bits & 0x80: 
-                    self._blend_pixel(canvas, x + xx + xo, baseline_y + yy + yo, color)
-                bits <<= 1
-        return adv
-
-    def _draw_text_element(self, canvas, el: Dict[str, Any]) -> None:
+    def _draw_text_element(self, canvas: Image.Image, el: Dict[str, Any]) -> None:
         content = sanitize_text(str(el.get('content', '')))
         x, y = int(el.get('x', 0)), int(el.get('y', 0))
         raw_color = el.get('color', [255, 255, 255])
         color = tuple(raw_color)
         if len(color) == 3: color = color + (255,)
+        
         font_name = el.get('font', '5x7')
         spacing = int(el.get('spacing', 1))
-        if font_name == 'awtrix':
-            cursor_x = x
-            for char in content:
-                adv = self._draw_awtrix_char(canvas, cursor_x, y, char, color)
-                cursor_x += adv + (spacing - 1)
-        else:
-            if font_name == '3x5':
-                font_data = FONT_3X5_DATA; char_w = 3; char_h = 5; stride = 3
-            else:
-                font_data = FONT_5X7_DATA; char_w = 5; char_h = 7; stride = 7
-            cursor_x = x
-            for char in content:
-                self._draw_bitmap_char_blend(canvas, cursor_x, y, char, font_data, char_w, char_h, stride, color)
-                cursor_x += char_w + spacing
+        
+        cursor_x = x
+        
+        for char in content:
+            mask, advance = self._get_char_mask(font_name, char)
+            
+            if mask:
+                draw_y = y
+                draw_x = cursor_x
+                
+                if font_name == 'awtrix':
+                    code = ord(char)
+                    if 32 <= code <= 126:
+                        glyph_idx = code - 32
+                        if glyph_idx < len(AWTRIX_GLYPHS):
+                            (_, _, _, _, xo, yo) = AWTRIX_GLYPHS[glyph_idx]
+                            draw_x += xo
+                            draw_y += (5 + yo)
+                
+                try:
+                    canvas.paste(color, (draw_x, draw_y), mask)
+                except Exception:
+                    pass
+            
+            cursor_x += advance + (spacing - 1 if font_name == 'awtrix' else spacing)
 
     def _draw_textlong_element(self, canvas, el: Dict[str, Any]) -> None:
         lines = el.get('_cached_lines', [])
@@ -423,32 +496,29 @@ class IDMDisplayEntity(LightEntity):
         total_distance = self._width + text_width
         offset = (time.time() * speed) % total_distance
         x = int(self._width - offset)
+        
         temp_el = el.copy()
         temp_el['type'] = 'text'
         temp_el['content'] = content 
         temp_el['x'] = x
         self._draw_text_element(canvas, temp_el)
 
-    def _draw_bitmap_char_blend(self, canvas, x, y, char, font_data, w, h, stride, color):
-        code = ord(char)
-        if code * stride >= len(font_data): return
-        offset = code * stride
-        for col in range(w):
-            if col >= stride: break
-            byte = font_data[offset + col]
-            for row in range(8): 
-                if row >= h: break
-                if (byte >> row) & 1:
-                    self._blend_pixel(canvas, x + col, y + row, color)
-
-    def _draw_pixels_element(self, canvas, el: Dict[str, Any]) -> None:
+    def _draw_pixels_element(self, canvas: Image.Image, el: Dict[str, Any]) -> None:
         pixels = el.get('pixels', [])
-        for p in pixels:
-            if isinstance(p, list) and len(p) >= 5:
-                x, y, r, g, b = int(p[0]), int(p[1]), int(p[2]), int(p[3]), int(p[4])
-                a = 255
-                if len(p) >= 6: a = int(p[5])
-                self._blend_pixel(canvas, x, y, (r, g, b, a))
+        if not pixels: return
+
+        layer = Image.new('RGBA', (self._width, self._height), (0, 0, 0, 0))
+        draw_access = layer.load()
+        w, h = self._width, self._height
+        
+        try:
+            for p in pixels:
+                if len(p) >= 5:
+                    draw_access[p[0], p[1]] = (p[2], p[3], p[4], p[5] if len(p) > 5 else 255)
+        except Exception:
+            pass
+        
+        canvas.alpha_composite(layer)
 
     def _draw_mdi_element(self, canvas, el: Dict[str, Any]):
         if not self._mdi_ready: return
@@ -462,16 +532,18 @@ class IDMDisplayEntity(LightEntity):
         color = tuple(c)
         if len(color) == 3: color = color + (255,)
         x, y = int(el.get('x', 0)), int(el.get('y', 0))
+        
         font = self._mdi_fonts.get(size)
         if not font:
             try:
                 font = ImageFont.truetype(self._font_path, size)
                 self._mdi_fonts[size] = font
             except Exception: return
+            
         layer = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
         layer_draw = ImageDraw.Draw(layer)
         layer_draw.text((x, y), icon_char, font=font, fill=color)
-        canvas.paste(layer, (0, 0), layer)
+        canvas.alpha_composite(layer)
 
     async def _fetch_and_process_image(self, el: Dict[str, Any]) -> Optional[Image.Image]:
         image_data = None
