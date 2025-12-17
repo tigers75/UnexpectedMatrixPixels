@@ -1,89 +1,44 @@
 # 🎨 UnexpectedMatrixPixels (UMP)
 
-<div align="center">
-
-**Direct, performance-focused Home Assistant integration for BLE pixel matrix displays**
-
-Seamless control of **IDOTMatrix** and **iPixel** LED matrix displays via local Bluetooth without bridges or cloud dependencies.
-
-
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Custom%20Component-blue)](https://www.home-assistant.io/)
-
-
-</div>
+**Home Assistant integration for controlling BLE LED matrix displays** (IDOTMatrix, iPixel, etc.) directly via Bluetooth without bridges.
 
 ---
 
-## ✨ Features
+## ⚡ Features
 
-### Core Capabilities
-- **Text Rendering**: Static text, scrolling text, and smart pagination for long messages
-- **Visual Elements**: Full support for Material Design Icons (MDI), custom images, and raw pixel control
-- **Real-time Preview**: Live camera entity showing display content synchronized with matrix
-- **Performance Optimized**: Frame diffing and intelligent rendering to minimize bandwidth
-- **Jinja2 Template Support**: Dynamic content generation with Home Assistant templating
-
-### Key Advantages
-- ✅ **Local Control Only**: No cloud dependency, direct Bluetooth communication
-- ✅ **Zero Bridges**: Runs directly on Home Assistant host or ESPHome proxy
-- ✅ **Low Latency**: Optimized BLE communication with retry mechanisms
-- ✅ **Image Support**: Render local files or URLs on the matrix
-- ✅ **Icon Library**: 7000+ Material Design Icons at your fingertips
-- ✅ **Flexible Layout**: Precise X, Y positioning with multiple font options
+- **Direct Bluetooth Control** - No cloud, no bridges. Runs on HA host or ESPHome proxy
+- **Multiple Visual Elements** - Text (static/scrolling), icons (MDI), images, raw pixels
+- **Live Camera Preview** - Real-time display of matrix content
+- **Jinja2 Templates** - Dynamic content with HA templating
+- **Performance Optimized** - Frame diffing to reduce bandwidth
 
 ---
 
 ## 🚀 Installation
 
-### Step 1: Copy Component Files
-Copy the `ump` folder to your Home Assistant configuration:
-```bash
-cp -r ump /config/custom_components/
-```
+1. Copy `ump` folder to `/config/custom_components/`
+2. Restart Home Assistant
+3. Go to Settings → Devices & Services → Create Integration
+4. Search for **UnexpectedMatrixPixels**
+5. Enter MAC address and display dimensions (e.g., `16x64`, `32x32`)
 
-### Step 2: Restart Home Assistant
+**Requirements:**
 ```
-Settings → Developer Tools → YAML → Restart Home Assistant
+Pillow >= 10.0.0
+bleak
+bleak-retry-connector >= 1.0.0
 ```
-
-### Step 3: Add Integration
-1. Navigate to **Settings → Devices & Services**
-2. Click **Create Integration**
-3. Search for **UnexpectedMatrixPixels**
-4. Enter your display's MAC address
-5. Specify dimensions (e.g., `16x64`, `32x32`, `64x32`)
-
-### Step 4: Verify Setup
-After setup, you'll have:
-- `light.<display_name>` - Control entity
-- `camera.<display_name>` - Live preview entity
 
 ---
 
-## 📋 Requirements
+## 📌 Quick Examples
 
-```yaml
-Pillow >= 10.0.0      # Image processing
-bleak                  # BLE client library
-bleak-retry-connector >= 1.0.0  # Connection reliability
-```
-
-**Supported Devices**:
-- IDOTMatrix displays (BLE)
-- iPixel displays (BLE)
-- Any compatible Bluetooth LE matrix display
-
----
-
-## 🎯 Quick Start
-
-### Display Static Text
+### Static Text
 ```yaml
 service: ump.draw_visuals
 target:
   entity_id: light.my_display
 data:
-  background: [0, 0, 0]
   elements:
     - type: text
       content: "Hello"
@@ -93,7 +48,7 @@ data:
       color: [255, 0, 0]
 ```
 
-### Create Scrolling Animation
+### Scrolling Text
 ```yaml
 service: ump.draw_visuals
 target:
@@ -101,15 +56,15 @@ target:
 data:
   elements:
     - type: textscroll
-      content: "Scrolling Message"
+      content: "News"
       y: 8
       color: [0, 255, 255]
       font: "awtrix"
       speed: 15
-  fps: 10
+  fps: 5
 ```
 
-### Display Material Design Icons
+### Icon
 ```yaml
 service: ump.draw_visuals
 target:
@@ -124,22 +79,7 @@ data:
       color: [100, 255, 150]
 ```
 
-### Render Local Images
-```yaml
-service: ump.draw_visuals
-target:
-  entity_id: light.my_display
-data:
-  elements:
-    - type: image
-      path: /config/www/custom_image.png
-      x: 0
-      y: 0
-      width: 64
-      height: 32
-```
-
-### Advanced: Smart Text with Pagination
+### Smart Text (Pagination)
 ```yaml
 service: ump.draw_visuals
 target:
@@ -147,7 +87,7 @@ target:
 data:
   elements:
     - type: textlong
-      content: "This is a very long message that will scroll smoothly"
+      content: "Long message that scrolls"
       x: 0
       y: 5
       font: "awtrix"
@@ -157,299 +97,99 @@ data:
       direction: "up"
 ```
 
-### Custom Pixel Drawing
-```yaml
-service: ump.draw_visuals
-target:
-  entity_id: light.my_display
-data:
-  elements:
-    - type: pixels
-      pixels:
-        - [0, 0, 255, 0, 0]      # Red pixel at (0,0)
-        - [1, 0, 0, 255, 0]      # Green pixel at (1,0)
-        - [2, 0, 0, 0, 255]      # Blue pixel at (2,0)
-```
+---
+
+## 📚 Element Types
+
+| Type | Description | Key Params |
+|------|-------------|-----------|
+| `text` | Static text | `content`, `x`, `y`, `color`, `font` |
+| `textscroll` | Scrolling text | `content`, `y`, `speed`, `font`, `color` |
+| `textlong` | Smart pagination + scroll | `content`, `y`, `speed`, `scroll_duration`, `direction` |
+| `icon` | MDI icon | `name` (mdi:*), `x`, `y`, `size`, `color` |
+| `image` | Image from URL/file | `path`/`url`, `x`, `y`, `width`, `height` |
+| `pixels` | Raw pixels | `pixels`: `[[x,y,r,g,b], ...]` |
 
 ---
 
-## 📚 Element Types Reference
-
-### `text` - Static Text
-Display fixed text at specified coordinates.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `content` | string | ✅ | Text to display |
-| `x` | int | ✅ | X position (0-63 for 64px wide) |
-| `y` | int | ✅ | Y position (0-31 for 32px tall) |
-| `color` | [R,G,B] | ✅ | RGB color (0-255) |
-| `font` | string | ✅ | Font: `"3x5"`, `"5x7"`, or `"awtrix"` |
-| `spacing` | int | ❌ | Pixel spacing between chars (default: 1) |
-
-### `textscroll` - Scrolling Text
-Text that scrolls continuously across the display.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `content` | string | ✅ | Text to scroll |
-| `y` | int | ✅ | Y position (vertical center) |
-| `color` | [R,G,B] | ✅ | RGB color |
-| `font` | string | ✅ | Font choice |
-| `speed` | float | ✅ | Speed in pixels/second |
-| `spacing` | int | ❌ | Char spacing |
-
-### `textlong` - Smart Pagination & Scroll
-Advanced text element with pagination and directional scrolling.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `content` | string | ✅ | Text content |
-| `x` | int | ❌ | X position (default: 0) |
-| `y` | int | ✅ | Y position |
-| `color` | [R,G,B] | ✅ | RGB color |
-| `font` | string | ✅ | Font choice |
-| `speed` | float | ✅ | Hold duration (seconds) |
-| `scroll_duration` | float | ✅ | Animation duration (seconds) |
-| `direction` | string | ✅ | `"up"`, `"down"`, `"left"`, `"right"` |
-
-### `icon` - Material Design Icon
-Render an MDI icon at specified position.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `name` | string | ✅ | MDI icon name (e.g., `"mdi:home"`) |
-| `x` | int | ✅ | X position |
-| `y` | int | ✅ | Y position |
-| `size` | int | ✅ | Icon size in pixels |
-| `color` | [R,G,B,A] | ✅ | RGBA color (A: opacity 0-255) |
-
-### `image` - Image Rendering
-Render local or remote images on the matrix.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `path` | string | ✅* | Local path (use if no URL) |
-| `url` | string | ✅* | Remote URL (use if no path) |
-| `x` | int | ✅ | X position |
-| `y` | int | ✅ | Y position |
-| `width` | int | ❌ | Resize width (optional) |
-| `height` | int | ❌ | Resize height (optional) |
-
-*Either `path` OR `url` is required.
-
-### `pixels` - Raw Pixel Data
-Direct pixel-level control for custom patterns.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `pixels` | array | ✅ | Array of `[x, y, r, g, b]` tuples |
-
----
-
-## 🎮 Services Reference
+## ⚙️ Services
 
 ### `ump.draw_visuals`
-The primary service for rendering content on the matrix.
+Render content on display.
 
-**Target**: Light entity with UMP integration
-
-**Parameters**:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `background` | [R,G,B] | [0,0,0] | Background color (black) |
-| `fps` | int (1-30) | 10 | Maximum frames per second |
-| `elements` | array | - | List of visual elements to render |
-
-**Performance Tip**: Lower `fps` values provide better connection stability on unreliable networks.
+**Parameters:**
+- `background` [R,G,B] - Background color (default: [0,0,0])
+- `fps` (1-30) - Frame rate (default: 10, **lower = more stable**)
+- `elements` - List of visual elements
 
 ### `ump.clear_display`
-Instantly clear the display screen.
-
-**Target**: Light entity with UMP integration
+Clear display screen.
 
 ### `ump.sync_time`
-Synchronize the display's internal clock with Home Assistant.
-
-**Target**: Light entity with UMP integration
+Sync display clock with HA.
 
 ---
 
-## 💡 Examples & Use Cases
+## ⚠️ Stability Notes
 
-### Spotify Now Playing
-Real-time display of current track with album art, progress bar, and artist info.
+**High refresh rate causes instability** - especially when updating display per second:
 
-See: `examples/spotify.yaml` for detailed implementation.
-
-### Smart Home Status Dashboard
-Display temperature, humidity, and device states with icons.
-
+✅ **Use lower FPS:**
 ```yaml
-elements:
-  - type: icon
-    name: mdi:thermometer
-    x: 0
-    y: 0
-    size: 12
-    color: [255, 100, 0]
-  - type: text
-    content: "{{ states('sensor.temperature') }}°C"
-    x: 15
-    y: 2
-    font: "5x7"
-    color: [255, 255, 255]
+fps: 5  # Better stability
 ```
 
-### Weather Display
-Show current conditions with animated icons.
+✅ **Avoid frequent updates** - batch changes together instead of multiple calls/sec
 
-```yaml
-elements:
-  - type: icon
-    name: "mdi:{{ state_attr('weather.home', 'icon') }}"
-    x: 8
-    y: 8
-    size: 16
-    color: [100, 200, 255]
-  - type: text
-    content: "{{ state_attr('weather.home', 'temperature') }}°"
-    x: 28
-    y: 10
-    font: "awtrix"
-    color: [200, 200, 200]
-```
-
-### Animation Effects
-Create pulsing colors or patterns with templates.
-
-```yaml
-elements:
-  - type: text
-    content: "Alert!"
-    x: 10
-    y: 5
-    font: "5x7"
-    color: "{% if now().second % 2 == 0 %}[255,0,0]{% else %}[0,0,0]{% endif %}"
-```
+✅ **Test with realistic intervals:**
+- Status updates: 30-60s
+- Media/music: 5-10s
+- Animations: 2-5s (with `fps: 5-8`)
 
 ---
 
-## 🔧 Advanced Configuration
+## 🔧 Real-World Example: Spotify
 
-### Jinja2 Templating
-All string fields support Jinja2 templates for dynamic content:
-
-```yaml
-data:
-  elements:
-    - type: text
-      content: "{{ now().strftime('%H:%M') }}"
-      x: 0
-      y: 0
-      font: "5x7"
-      color: [255, 255, 255]
-```
-
-### Conditional Rendering
-Show different content based on conditions:
-
-```yaml
-{% if states('light.living_room') == 'on' %}
-  {% set elements = [...] %}
-{% endif %}
-```
-
-### Performance Tuning
-- **Lower FPS**: Use 5-8 fps for stable connections with complex scenes
-- **Frame Diffing**: System automatically optimizes bandwidth by sending only changed pixels
-- **Batch Operations**: Combine multiple elements in single service call
+See `examples/spotify.yaml` for advanced template-based implementation with:
+- Artist/title scrolling
+- Progress bar rendering
+- Conditional playback display
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Display Not Responding
-1. Check MAC address is correct: `Settings → Devices & Services → UMP`
-2. Verify device is powered and in range
-3. Restart Home Assistant: `Settings → Developer Tools → YAML → Restart Home Assistant`
-4. Try lowering `fps` to 5-8 for better stability
-
-### Bluetooth Connection Issues
-- Ensure Home Assistant host has Bluetooth capability
-- Check for interference from WiFi or other 2.4GHz devices
-- Try running Home Assistant's Bluetooth debugger:
-  ```
-  Settings → Devices & Services → Bluetooth → Assistant settings
-  ```
-
-### Text Not Displaying Correctly
-- Verify font parameter: use `"5x7"`, `"3x5"`, or `"awtrix"`
-- Check text coordinates are within display bounds
-- Confirm color values are in range [0-255]
-
-### Images Not Loading
-- Use absolute paths for local files: `/config/www/image.png`
-- Verify image format is PNG or JPG
-- Check image dimensions don't exceed display size
-
-### Service Call Errors
-- Validate YAML syntax in automation editor
-- Ensure `entity_id` references an existing light entity
-- Check all required parameters are provided
+| Issue | Solution |
+|-------|----------|
+| Display not responding | Lower `fps` to 3-5, check MAC address |
+| Connection drops | Reduce update frequency, lower `fps` |
+| Text garbled | Verify font name (`"5x7"`, `"3x5"`, `"awtrix"`) |
+| Image not loading | Use absolute path: `/config/www/image.png` |
 
 ---
 
-## 📦 Component Structure
+## 📁 Component Structure
 
 ```
 ump/
-├── __init__.py           # Integration initialization & service handlers
-├── config_flow.py        # Home Assistant UI configuration
-├── light.py              # Light entity implementation
-├── camera.py             # Camera entity (live preview)
-├── ble_client.py         # Bluetooth LE communication
-├── fonts.py              # Font rendering engine
-├── services.yaml         # Service definitions
-├── manifest.json         # Integration metadata
-└── strings.json          # Localization strings
+├── __init__.py         # Service handlers
+├── config_flow.py      # UI configuration
+├── light.py            # Light entity
+├── camera.py           # Camera preview
+├── ble_client.py       # BLE communication
+├── fonts.py            # Font rendering
+├── services.yaml       # Service definitions
+└── manifest.json       # Metadata
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to:
-- Report bugs via GitHub Issues
-- Submit feature requests
-- Create pull requests with improvements
-- Share automation examples
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see LICENSE file for details.
+MIT License - See LICENSE file
 
 ---
 
-## 🙏 Acknowledgments
+**Acknowledgments:** Home Assistant, Bleak, Material Design Icons, Community
 
-- **Home Assistant**: Amazing home automation platform
-- **Bleak**: Excellent Python BLE library
-- **Material Design Icons**: Comprehensive icon set
-- **Community Contributors**: Thanks for feedback and testing
-
----
-
-## 📞 Support
-
-For issues, questions, or suggestions:
-1. Check [Existing Issues](https://github.com/suchyindustries/UnexpectedMatrixPixels/issues)
-2. Create a [New Issue](https://github.com/suchyindustries/UnexpectedMatrixPixels/issues/new)
-3. Join Home Assistant Community discussions
-
----
-
-**Made with ❤️ for the Home Assistant community**
+**Support:** [GitHub Issues](https://github.com/suchyindustries/UnexpectedMatrixPixels/issues)
